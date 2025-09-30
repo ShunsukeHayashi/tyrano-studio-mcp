@@ -1,6 +1,21 @@
 # TyranoStudio MCP Server
 
-TyranoStudio（ティラノスタジオ）のプロジェクト管理とTyranoScriptのゲーム開発を支援するMCPサーバーです。
+[![Test Status](https://img.shields.io/badge/tests-passing-brightgreen)]()
+[![Python](https://img.shields.io/badge/python-3.11-blue)]()
+[![License](https://img.shields.io/badge/license-MIT-green)]()
+
+TyranoStudio（ティラノスタジオ）のプロジェクト管理とTyranoScriptのゲーム開発を支援する包括的なMCPサーバーです。
+
+## ✨ 主要機能
+
+- 🎮 **プロジェクト管理** - 作成、削除、ファイル一覧
+- 📝 **シナリオ編集** - 読み書き、高度な構文検証
+- 🎨 **リソース管理** - 画像、音声ファイルの追加・一覧
+- 🔍 **高度な検証** - ラベル存在確認、リソース参照チェック
+- 📊 **プロジェクト分析** - 統計、プレイ時間推定、フロー可視化
+- 🎭 **テンプレート生成** - 5種類のシナリオテンプレート
+- 🔧 **Git連携** - バージョン管理サポート
+- ⚡ **最適化ツール** - 未使用リソース検出、一括操作
 
 ## 📁 対象ディレクトリ構造
 
