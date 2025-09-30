@@ -174,6 +174,54 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="add_audio",
+            description="プロジェクトに音声ファイル（BGM/効果音）を追加",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "プロジェクト名",
+                    },
+                    "source_path": {
+                        "type": "string",
+                        "description": "コピー元の音声ファイルパス",
+                    },
+                    "audio_type": {
+                        "type": "string",
+                        "description": "音声タイプ (bgm: BGM, sound: 効果音)",
+                        "enum": ["bgm", "sound"],
+                    },
+                    "dest_filename": {
+                        "type": "string",
+                        "description": "配置先ファイル名 (省略時は元のファイル名)",
+                        "default": "",
+                    },
+                },
+                "required": ["project_name", "source_path", "audio_type"],
+            },
+        ),
+        types.Tool(
+            name="list_audio",
+            description="プロジェクト内の音声ファイル一覧を取得",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "プロジェクト名",
+                    },
+                    "audio_type": {
+                        "type": "string",
+                        "description": "音声タイプ (bgm, sound, all)",
+                        "enum": ["bgm", "sound", "all"],
+                        "default": "all",
+                    },
+                },
+                "required": ["project_name"],
+            },
+        ),
+        types.Tool(
             name="delete_project",
             description="プロジェクトを削除",
             inputSchema={
@@ -220,6 +268,34 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["project_name", "scenario_file"],
             },
         ),
+        types.Tool(
+            name="generate_scenario_template",
+            description="テンプレートからシナリオを生成",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "プロジェクト名",
+                    },
+                    "scenario_file": {
+                        "type": "string",
+                        "description": "生成するシナリオファイル名",
+                    },
+                    "template_type": {
+                        "type": "string",
+                        "description": "テンプレートタイプ",
+                        "enum": ["basic_scene", "character_intro", "choice_branch", "dialogue", "title_screen"],
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "テンプレートパラメータ（JSON形式）",
+                        "default": {},
+                    },
+                },
+                "required": ["project_name", "scenario_file", "template_type"],
+            },
+        ),
     ]
 
 
@@ -243,12 +319,18 @@ async def call_tool(name: str, arguments: Any) -> list[types.TextContent]:
             return await write_config_handler(arguments)
         elif name == "add_image":
             return await add_image_handler(arguments)
+        elif name == "add_audio":
+            return await add_audio_handler(arguments)
+        elif name == "list_audio":
+            return await list_audio_handler(arguments)
         elif name == "delete_project":
             return await delete_project_handler(arguments)
         elif name == "get_tyranoscript_reference":
             return await get_tyranoscript_reference_handler(arguments)
         elif name == "validate_scenario":
             return await validate_scenario_handler(arguments)
+        elif name == "generate_scenario_template":
+            return await generate_scenario_template_handler(arguments)
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
     except Exception as e:
@@ -408,6 +490,70 @@ async def add_image_handler(arguments: dict) -> list[types.TextContent]:
     return [types.TextContent(type="text", text=f"画像ファイル '{filename}' を {dest_category} に追加しました")]
 
 
+async def add_audio_handler(arguments: dict) -> list[types.TextContent]:
+    """音声ファイルを追加"""
+    project_name = arguments["project_name"]
+    source_path = Path(arguments["source_path"])
+    audio_type = arguments["audio_type"]
+    dest_filename = arguments.get("dest_filename", "")
+
+    if not source_path.exists():
+        return [types.TextContent(type="text", text=f"ソースファイル '{source_path}' が見つかりません")]
+
+    # 配置先ディレクトリ
+    dest_dir = PROJECTS_DIR / project_name / "data" / audio_type
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # ファイル名
+    filename = dest_filename if dest_filename else source_path.name
+    dest_path = dest_dir / filename
+
+    # コピー
+    try:
+        shutil.copy2(source_path, dest_path)
+        type_name = "BGM" if audio_type == "bgm" else "効果音"
+        return [types.TextContent(type="text", text=f"{type_name}ファイル '{filename}' を追加しました")]
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"ファイルコピーエラー: {str(e)}")]
+
+
+async def list_audio_handler(arguments: dict) -> list[types.TextContent]:
+    """音声ファイル一覧を取得"""
+    project_name = arguments["project_name"]
+    audio_type = arguments.get("audio_type", "all")
+
+    project_path = PROJECTS_DIR / project_name
+    if not project_path.exists():
+        return [types.TextContent(type="text", text=f"プロジェクト '{project_name}' が見つかりません")]
+
+    result = []
+
+    if audio_type in ["bgm", "all"]:
+        bgm_dir = project_path / "data" / "bgm"
+        if bgm_dir.exists():
+            bgm_files = [f.name for f in bgm_dir.iterdir() if f.is_file()]
+            if bgm_files:
+                result.append(f"【BGM】({len(bgm_files)}件)")
+                result.extend(f"  - {f}" for f in sorted(bgm_files))
+            else:
+                result.append("【BGM】なし")
+
+    if audio_type in ["sound", "all"]:
+        sound_dir = project_path / "data" / "sound"
+        if sound_dir.exists():
+            sound_files = [f.name for f in sound_dir.iterdir() if f.is_file()]
+            if sound_files:
+                result.append(f"【効果音】({len(sound_files)}件)")
+                result.extend(f"  - {f}" for f in sorted(sound_files))
+            else:
+                result.append("【効果音】なし")
+
+    if not result:
+        result.append("音声ファイルが見つかりません")
+
+    return [types.TextContent(type="text", text="\n".join(result))]
+
+
 async def delete_project_handler(arguments: dict) -> list[types.TextContent]:
     """プロジェクトを削除"""
     project_name = arguments["project_name"]
@@ -513,14 +659,15 @@ async def get_tyranoscript_reference_handler(arguments: dict) -> list[types.Text
 
 
 async def validate_scenario_handler(arguments: dict) -> list[types.TextContent]:
-    """シナリオファイルの基本的な構文チェック"""
+    """シナリオファイルの高度な構文チェック"""
     project_name = arguments["project_name"]
     scenario_file = arguments["scenario_file"]
 
     if not scenario_file.endswith(".ks"):
         scenario_file += ".ks"
 
-    scenario_path = PROJECTS_DIR / project_name / "data" / "scenario" / scenario_file
+    project_path = PROJECTS_DIR / project_name
+    scenario_path = project_path / "data" / "scenario" / scenario_file
 
     if not scenario_path.exists():
         return [types.TextContent(type="text", text=f"シナリオファイル '{scenario_file}' が見つかりません")]
@@ -530,57 +677,298 @@ async def validate_scenario_handler(arguments: dict) -> list[types.TextContent]:
 
     errors = []
     warnings = []
+    info = []
+
+    # ラベルとジャンプ先を収集
+    labels = set()
+    jump_targets = []
+    call_targets = []
+    link_targets = []
+
+    # リソース参照を収集
+    image_refs = []
+    bgm_refs = []
+    se_refs = []
+    video_refs = []
+    storage_refs = []
+
+    # キャラクター定義と使用
+    defined_charas = set()
+    used_charas = set()
 
     # 基本的なチェック
     tag_stack = []
+    import re
+
     for i, line in enumerate(lines, 1):
-        line = line.strip()
+        line_strip = line.strip()
 
         # コメントはスキップ
-        if line.startswith(";") or line.startswith("//"):
+        if line_strip.startswith(";") or line_strip.startswith("//"):
             continue
 
+        # ラベル定義を収集
+        if line_strip.startswith("*"):
+            label_name = line_strip[1:].strip()
+            if label_name:
+                labels.add(label_name)
+
         # タグの対応チェック
-        if "[if" in line:
+        if "[if" in line_strip:
             tag_stack.append(("if", i))
-        elif "[endif]" in line:
+        elif "[endif]" in line_strip:
             if tag_stack and tag_stack[-1][0] == "if":
                 tag_stack.pop()
             else:
                 errors.append(f"行 {i}: 対応する[if]がありません")
 
-        if "[iscript]" in line:
+        if "[iscript]" in line_strip:
             tag_stack.append(("iscript", i))
-        elif "[endscript]" in line:
+        elif "[endscript]" in line_strip:
             if tag_stack and tag_stack[-1][0] == "iscript":
                 tag_stack.pop()
             else:
                 errors.append(f"行 {i}: 対応する[iscript]がありません")
 
-        # リンクの対応チェック
-        if "[link" in line:
+        if "[link" in line_strip:
             tag_stack.append(("link", i))
-        elif "[endlink]" in line:
+        elif "[endlink]" in line_strip:
             if tag_stack and tag_stack[-1][0] == "link":
                 tag_stack.pop()
             else:
                 warnings.append(f"行 {i}: 対応する[link]がありません")
 
+        # ジャンプ先のチェック
+        if "[jump" in line_strip or "@jump" in line_strip:
+            match = re.search(r'target=["\']?\*?([^"\'\s\]]+)', line_strip)
+            if match:
+                target = match.group(1)
+                jump_targets.append((target, i))
+
+        if "[call" in line_strip or "@call" in line_strip:
+            match = re.search(r'target=["\']?\*?([^"\'\s\]]+)', line_strip)
+            if match:
+                target = match.group(1)
+                call_targets.append((target, i))
+
+        if "[link" in line_strip or "[glink" in line_strip:
+            match = re.search(r'target=["\']?\*?([^"\'\s\]]+)', line_strip)
+            if match:
+                target = match.group(1)
+                link_targets.append((target, i))
+
+        # リソース参照のチェック
+        if "[bg" in line_strip or "[image" in line_strip or "[chara_new" in line_strip or "[chara_show" in line_strip or "[chara_mod" in line_strip:
+            match = re.search(r'storage=["\']([^"\']+)["\']', line_strip)
+            if match:
+                storage = match.group(1)
+                if "[bg" in line_strip:
+                    image_refs.append((storage, "bgimage", i))
+                elif "[image" in line_strip:
+                    image_refs.append((storage, "image", i))
+                elif "[chara" in line_strip:
+                    image_refs.append((storage, "fgimage", i))
+
+        if "[playbgm" in line_strip:
+            match = re.search(r'storage=["\']?([^"\'\s\]]+)', line_strip)
+            if match:
+                bgm_refs.append((match.group(1), i))
+
+        if "[playse" in line_strip:
+            match = re.search(r'storage=["\']?([^"\'\s\]]+)', line_strip)
+            if match:
+                se_refs.append((match.group(1), i))
+
+        if "[playvideo" in line_strip:
+            match = re.search(r'storage=["\']?([^"\'\s\]]+)', line_strip)
+            if match:
+                video_refs.append((match.group(1), i))
+
+        if "[call" in line_strip or "@call" in line_strip:
+            match = re.search(r'storage=["\']([^"\']+)["\']', line_strip)
+            if match:
+                storage_refs.append((match.group(1), i))
+
+        # キャラクター定義と使用
+        if "[chara_new" in line_strip:
+            match = re.search(r'name=["\']([^"\']+)["\']', line_strip)
+            if match:
+                defined_charas.add(match.group(1))
+
+        if any(tag in line_strip for tag in ["[chara_show", "[chara_hide", "[chara_mod", "[chara_layer"]):
+            match = re.search(r'name=["\']([^"\']+)["\']', line_strip)
+            if match:
+                used_charas.add(match.group(1))
+
     # 未閉じタグのチェック
     for tag, line_num in tag_stack:
         errors.append(f"行 {line_num}: [{tag}]が閉じられていません")
 
+    # ラベル存在チェック
+    for target, line_num in jump_targets + call_targets + link_targets:
+        if target not in labels:
+            errors.append(f"行 {line_num}: ラベル '*{target}' が定義されていません")
+
+    # ストレージファイル存在チェック
+    for storage_file, line_num in storage_refs:
+        if not storage_file.endswith(".ks"):
+            storage_file += ".ks"
+        storage_path = project_path / "data" / "scenario" / storage_file
+        if not storage_path.exists():
+            warnings.append(f"行 {line_num}: シナリオファイル '{storage_file}' が見つかりません")
+
+    # リソースファイル存在チェック
+    for img_file, category, line_num in image_refs:
+        img_path = project_path / "data" / category / img_file
+        if not img_path.exists():
+            warnings.append(f"行 {line_num}: 画像ファイル '{img_file}' が {category}/ に見つかりません")
+
+    for bgm_file, line_num in bgm_refs:
+        bgm_path = project_path / "data" / "bgm" / bgm_file
+        if not bgm_path.exists():
+            warnings.append(f"行 {line_num}: BGMファイル '{bgm_file}' が見つかりません")
+
+    for se_file, line_num in se_refs:
+        se_path = project_path / "data" / "sound" / se_file
+        if not se_path.exists():
+            warnings.append(f"行 {line_num}: 効果音ファイル '{se_file}' が見つかりません")
+
+    for video_file, line_num in video_refs:
+        video_path = project_path / "data" / "video" / video_file
+        if not video_path.exists():
+            warnings.append(f"行 {line_num}: 動画ファイル '{video_file}' が見つかりません")
+
+    # 未定義キャラクター使用チェック
+    for chara in used_charas:
+        if chara not in defined_charas:
+            warnings.append(f"キャラクター '{chara}' が定義されていません（[chara_new]で定義してください）")
+
+    # 統計情報
+    info.append(f"ラベル数: {len(labels)}")
+    info.append(f"ジャンプ/リンク数: {len(jump_targets) + len(call_targets) + len(link_targets)}")
+    info.append(f"定義済みキャラクター数: {len(defined_charas)}")
+
     # 結果
     if not errors and not warnings:
-        result = "✓ 構文エラーは見つかりませんでした"
+        result = "✅ 構文エラーは見つかりませんでした\n\n"
+        result += "【統計】\n" + "\n".join(info)
     else:
-        result = "構文チェック結果:\n\n"
+        result = "🔍 構文チェック結果:\n\n"
         if errors:
             result += "【エラー】\n" + "\n".join(errors) + "\n\n"
         if warnings:
-            result += "【警告】\n" + "\n".join(warnings)
+            result += "【警告】\n" + "\n".join(warnings) + "\n\n"
+        if info:
+            result += "【統計】\n" + "\n".join(info)
 
     return [types.TextContent(type="text", text=result)]
+
+
+async def generate_scenario_template_handler(arguments: dict) -> list[types.TextContent]:
+    """テンプレートからシナリオを生成"""
+    project_name = arguments["project_name"]
+    scenario_file = arguments["scenario_file"]
+    template_type = arguments["template_type"]
+    params = arguments.get("params", {})
+
+    if not scenario_file.endswith(".ks"):
+        scenario_file += ".ks"
+
+    templates = {
+        "basic_scene": lambda p: f"""; 基本シーン
+*{p.get('label', 'start')}
+
+[cm]
+[bg storage="{p.get('bg', 'room.jpg')}"]
+
+{p.get('text', 'ここにテキストを入力してください。')}[p]
+
+[jump target="{p.get('next_label', '*end')}"]
+[s]
+""",
+        "character_intro": lambda p: f"""; キャラクター登場シーン
+*{p.get('label', 'chara_intro')}
+
+[cm]
+[bg storage="{p.get('bg', 'room.jpg')}"]
+
+[chara_new name="{p.get('chara_name', 'character1')}" storage="{p.get('chara_image', 'chara/character1.png')}" jname="{p.get('chara_jname', 'キャラクター')}"]
+[chara_show name="{p.get('chara_name', 'character1')}"]
+
+#{p.get('chara_jname', 'キャラクター')}
+{p.get('dialogue', 'こんにちは！')}[p]
+
+[jump target="{p.get('next_label', '*next')}"]
+[s]
+""",
+        "choice_branch": lambda p: f"""; 選択肢分岐
+*{p.get('label', 'choice')}
+
+[cm]
+{p.get('prompt_text', '選択してください。')}[p]
+
+[glink text="{p.get('choice1_text', '選択肢1')}" target="*{p.get('choice1_label', 'branch1')}" size=20 width=500 x=30 y=200]
+[glink text="{p.get('choice2_text', '選択肢2')}" target="*{p.get('choice2_label', 'branch2')}" size=20 width=500 x=30 y=260]
+{p.get('choice3_text') and f'[glink text="{p.get("choice3_text")}" target="*{p.get("choice3_label", "branch3")}" size=20 width=500 x=30 y=320]' or ''}
+[s]
+
+*{p.get('choice1_label', 'branch1')}
+[cm]
+{p.get('choice1_result', '選択肢1を選びました。')}[p]
+[jump target="{p.get('next_label', '*end')}"]
+
+*{p.get('choice2_label', 'branch2')}
+[cm]
+{p.get('choice2_result', '選択肢2を選びました。')}[p]
+[jump target="{p.get('next_label', '*end')}"]
+""",
+        "dialogue": lambda p: f"""; 会話シーン
+*{p.get('label', 'dialogue')}
+
+[cm]
+[bg storage="{p.get('bg', 'room.jpg')}"]
+
+#{p.get('chara1_name', 'キャラA')}
+{p.get('line1', 'こんにちは。')}[p]
+
+#{p.get('chara2_name', 'キャラB')}
+{p.get('line2', 'やあ、元気？')}[p]
+
+#{p.get('chara1_name', 'キャラA')}
+{p.get('line3', 'うん、元気だよ！')}[p]
+
+[jump target="{p.get('next_label', '*next')}"]
+[s]
+""",
+        "title_screen": lambda p: f"""; タイトル画面
+*{p.get('label', 'title')}
+
+[cm]
+[clearfix]
+[hidemenubutton]
+[bg storage="{p.get('bg', 'title.jpg')}"]
+
+[glink text="はじめから" target="*{p.get('start_label', 'start')}" size=20 width=300 x=490 y=300]
+[glink text="つづきから" role="load" size=20 width=300 x=490 y=360]
+[glink text="終了" role="sleepgame" size=20 width=300 x=490 y=420]
+[s]
+"""
+    }
+
+    if template_type not in templates:
+        return [types.TextContent(type="text", text=f"不明なテンプレートタイプ: {template_type}")]
+
+    # テンプレート生成
+    content = templates[template_type](params)
+
+    # ファイルに書き込み
+    scenario_dir = PROJECTS_DIR / project_name / "data" / "scenario"
+    scenario_path = scenario_dir / scenario_file
+
+    scenario_dir.mkdir(parents=True, exist_ok=True)
+    scenario_path.write_text(content, encoding="utf-8")
+
+    return [types.TextContent(type="text", text=f"テンプレート '{template_type}' からシナリオ '{scenario_file}' を生成しました")]
 
 
 async def main():
