@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "tyrano-studio": {
+      "command": "python3.11",
+      "args": ["/Users/shunsuke/tyrano_studio_mcp_server.py"],
+      "description": "TyranoStudio project management and TyranoScript development"
+    }
+  }
+}
