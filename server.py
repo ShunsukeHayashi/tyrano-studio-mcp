@@ -296,6 +296,38 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["project_name", "scenario_file", "template_type"],
             },
         ),
+        types.Tool(
+            name="analyze_project",
+            description="プロジェクト全体を分析（シナリオ統計、リソース使用状況等）",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "プロジェクト名",
+                    },
+                },
+                "required": ["project_name"],
+            },
+        ),
+        types.Tool(
+            name="analyze_scenario_flow",
+            description="シナリオフローを解析（ラベル間の遷移を可視化）",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "プロジェクト名",
+                    },
+                    "scenario_file": {
+                        "type": "string",
+                        "description": "シナリオファイル名",
+                    },
+                },
+                "required": ["project_name", "scenario_file"],
+            },
+        ),
     ]
 
 
@@ -331,6 +363,10 @@ async def call_tool(name: str, arguments: Any) -> list[types.TextContent]:
             return await validate_scenario_handler(arguments)
         elif name == "generate_scenario_template":
             return await generate_scenario_template_handler(arguments)
+        elif name == "analyze_project":
+            return await analyze_project_handler(arguments)
+        elif name == "analyze_scenario_flow":
+            return await analyze_scenario_flow_handler(arguments)
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
     except Exception as e:
@@ -969,6 +1005,246 @@ async def generate_scenario_template_handler(arguments: dict) -> list[types.Text
     scenario_path.write_text(content, encoding="utf-8")
 
     return [types.TextContent(type="text", text=f"テンプレート '{template_type}' からシナリオ '{scenario_file}' を生成しました")]
+
+
+async def analyze_project_handler(arguments: dict) -> list[types.TextContent]:
+    """プロジェクト全体を分析"""
+    project_name = arguments["project_name"]
+    project_path = PROJECTS_DIR / project_name
+
+    if not project_path.exists():
+        return [types.TextContent(type="text", text=f"プロジェクト '{project_name}' が見つかりません")]
+
+    import re
+
+    # シナリオファイルを収集
+    scenario_dir = project_path / "data" / "scenario"
+    scenario_files = []
+    if scenario_dir.exists():
+        scenario_files = [f.name for f in scenario_dir.iterdir() if f.suffix == ".ks"]
+
+    # リソースを収集
+    resource_counts = {}
+    resource_dirs = {
+        "背景画像": "bgimage",
+        "キャラクター画像": "fgimage",
+        "その他画像": "image",
+        "BGM": "bgm",
+        "効果音": "sound",
+        "動画": "video"
+    }
+
+    for label, dir_name in resource_dirs.items():
+        res_dir = project_path / "data" / dir_name
+        if res_dir.exists():
+            files = [f for f in res_dir.iterdir() if f.is_file()]
+            resource_counts[label] = len(files)
+        else:
+            resource_counts[label] = 0
+
+    # 全シナリオを解析
+    total_lines = 0
+    total_text_lines = 0
+    total_labels = set()
+    total_jumps = 0
+    total_choices = 0
+    all_characters = set()
+    word_count = 0
+
+    for scenario_file in scenario_files:
+        scenario_path = scenario_dir / scenario_file
+        try:
+            content = scenario_path.read_text(encoding="utf-8")
+            lines = content.split("\n")
+            total_lines += len(lines)
+
+            for line in lines:
+                line_strip = line.strip()
+
+                # コメントをスキップ
+                if line_strip.startswith(";") or line_strip.startswith("//"):
+                    continue
+
+                # ラベル
+                if line_strip.startswith("*"):
+                    label_name = line_strip[1:].strip()
+                    if label_name:
+                        total_labels.add(label_name)
+
+                # ジャンプ/コール
+                if any(tag in line_strip for tag in ["[jump", "@jump", "[call", "@call"]):
+                    total_jumps += 1
+
+                # 選択肢
+                if "[glink" in line_strip or "[link" in line_strip:
+                    total_choices += 1
+
+                # キャラクター定義
+                if "[chara_new" in line_strip:
+                    match = re.search(r'name=["\']([^"\']+)["\']', line_strip)
+                    if match:
+                        all_characters.add(match.group(1))
+
+                # テキスト行（タグがない、またはテキストを含む行）
+                if line_strip and not line_strip.startswith("[") and not line_strip.startswith("*") and not line_strip.startswith(";"):
+                    total_text_lines += 1
+                    # 簡易的な文字数カウント（[p]などのタグを除く）
+                    text_only = re.sub(r'\[.*?\]', '', line_strip)
+                    word_count += len(text_only)
+
+        except Exception as e:
+            print(f"Error reading {scenario_file}: {e}")
+
+    # プレイ時間推定（平均読書速度: 600文字/分）
+    estimated_playtime = word_count / 600 if word_count > 0 else 0
+
+    # レポート生成
+    report = f"""📊 プロジェクト分析レポート: {project_name}
+{'=' * 60}
+
+【シナリオ統計】
+- シナリオファイル数: {len(scenario_files)}
+- 総行数: {total_lines:,}
+- テキスト行数: {total_text_lines:,}
+- 総文字数: {word_count:,}
+- ラベル数: {len(total_labels)}
+- ジャンプ/コール数: {total_jumps}
+- 選択肢数: {total_choices}
+- 定義済みキャラクター数: {len(all_characters)}
+
+【推定プレイ時間】
+- 約 {estimated_playtime:.1f} 分 ({estimated_playtime/60:.1f} 時間)
+  ※ 平均読書速度600文字/分で計算
+
+【リソース統計】
+"""
+
+    for label, count in resource_counts.items():
+        report += f"- {label}: {count}件\n"
+
+    if scenario_files:
+        report += f"\n【シナリオファイル一覧】\n"
+        for sf in sorted(scenario_files):
+            report += f"- {sf}\n"
+
+    if all_characters:
+        report += f"\n【登場キャラクター】\n"
+        for char in sorted(all_characters):
+            report += f"- {char}\n"
+
+    return [types.TextContent(type="text", text=report)]
+
+
+async def analyze_scenario_flow_handler(arguments: dict) -> list[types.TextContent]:
+    """シナリオフローを解析"""
+    project_name = arguments["project_name"]
+    scenario_file = arguments["scenario_file"]
+
+    if not scenario_file.endswith(".ks"):
+        scenario_file += ".ks"
+
+    scenario_path = PROJECTS_DIR / project_name / "data" / "scenario" / scenario_file
+
+    if not scenario_path.exists():
+        return [types.TextContent(type="text", text=f"シナリオファイル '{scenario_file}' が見つかりません")]
+
+    content = scenario_path.read_text(encoding="utf-8")
+    lines = content.split("\n")
+
+    import re
+
+    # ラベルとその遷移を解析
+    labels = {}  # {label_name: {"line": line_num, "jumps_to": [], "choices": []}}
+    current_label = None
+
+    for i, line in enumerate(lines, 1):
+        line_strip = line.strip()
+
+        # コメントをスキップ
+        if line_strip.startswith(";") or line_strip.startswith("//"):
+            continue
+
+        # ラベル定義
+        if line_strip.startswith("*"):
+            label_name = line_strip[1:].strip()
+            if label_name:
+                current_label = label_name
+                labels[label_name] = {
+                    "line": i,
+                    "jumps_to": [],
+                    "choices": [],
+                    "calls": []
+                }
+
+        if current_label:
+            # ジャンプ
+            if "[jump" in line_strip or "@jump" in line_strip:
+                match = re.search(r'target=["\']?\*?([^"\'\s\]]+)', line_strip)
+                if match:
+                    target = match.group(1)
+                    labels[current_label]["jumps_to"].append(target)
+
+            # コール
+            if "[call" in line_strip or "@call" in line_strip:
+                match = re.search(r'target=["\']?\*?([^"\'\s\]]+)', line_strip)
+                if match:
+                    target = match.group(1)
+                    labels[current_label]["calls"].append(target)
+
+            # 選択肢
+            if "[link" in line_strip or "[glink" in line_strip:
+                match = re.search(r'target=["\']?\*?([^"\'\s\]]+)', line_strip)
+                if match:
+                    target = match.group(1)
+                    text_match = re.search(r'text=["\']([^"\']+)["\']', line_strip)
+                    choice_text = text_match.group(1) if text_match else target
+                    labels[current_label]["choices"].append({
+                        "text": choice_text,
+                        "target": target
+                    })
+
+    # フロー図生成
+    report = f"""🔀 シナリオフロー解析: {scenario_file}
+{'=' * 60}
+
+【ラベル一覧】 ({len(labels)}個)
+"""
+
+    for label_name, info in sorted(labels.items(), key=lambda x: x[1]["line"]):
+        report += f"\n*{label_name} (行 {info['line']})\n"
+
+        if info["jumps_to"]:
+            report += f"  → ジャンプ: " + ", ".join(f"*{t}" for t in info["jumps_to"]) + "\n"
+
+        if info["calls"]:
+            report += f"  ⇒ コール: " + ", ".join(f"*{t}" for t in info["calls"]) + "\n"
+
+        if info["choices"]:
+            report += f"  ◇ 選択肢:\n"
+            for choice in info["choices"]:
+                report += f"    - [{choice['text']}] → *{choice['target']}\n"
+
+    # Mermaid形式のフローチャート
+    report += f"\n【Mermaidフローチャート】\n```mermaid\ngraph TD\n"
+
+    for label_name, info in labels.items():
+        safe_label = label_name.replace("-", "_").replace(" ", "_")
+
+        for target in info["jumps_to"]:
+            safe_target = target.replace("-", "_").replace(" ", "_")
+            report += f"  {safe_label}[{label_name}] --> {safe_target}[{target}]\n"
+
+        for choice in info["choices"]:
+            safe_target = choice["target"].replace("-", "_").replace(" ", "_")
+            report += f"  {safe_label}[{label_name}] -->|{choice['text']}| {safe_target}[{choice['target']}]\n"
+
+        for target in info["calls"]:
+            safe_target = target.replace("-", "_").replace(" ", "_")
+            report += f"  {safe_label}[{label_name}] -.->|call| {safe_target}[{target}]\n"
+
+    report += "```\n"
+
+    return [types.TextContent(type="text", text=report)]
 
 
 async def main():
