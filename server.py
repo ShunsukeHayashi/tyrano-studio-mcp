@@ -328,6 +328,111 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["project_name", "scenario_file"],
             },
         ),
+        types.Tool(
+            name="git_init",
+            description="プロジェクトにGitリポジトリを初期化",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "プロジェクト名",
+                    },
+                },
+                "required": ["project_name"],
+            },
+        ),
+        types.Tool(
+            name="git_commit",
+            description="プロジェクトの変更をコミット",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "プロジェクト名",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "コミットメッセージ",
+                    },
+                },
+                "required": ["project_name", "message"],
+            },
+        ),
+        types.Tool(
+            name="git_status",
+            description="Gitリポジトリの状態を確認",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "プロジェクト名",
+                    },
+                },
+                "required": ["project_name"],
+            },
+        ),
+        types.Tool(
+            name="git_log",
+            description="コミット履歴を表示",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "プロジェクト名",
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "表示件数",
+                        "default": 10,
+                    },
+                },
+                "required": ["project_name"],
+            },
+        ),
+        types.Tool(
+            name="optimize_resources",
+            description="プロジェクトのリソース使用状況を分析し、最適化提案を行う",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "プロジェクト名",
+                    },
+                },
+                "required": ["project_name"],
+            },
+        ),
+        types.Tool(
+            name="batch_rename",
+            description="複数ファイルを一括リネーム",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "プロジェクト名",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "検索パターン（正規表現）",
+                    },
+                    "replacement": {
+                        "type": "string",
+                        "description": "置換文字列",
+                    },
+                    "target_dir": {
+                        "type": "string",
+                        "description": "対象ディレクトリ（data/配下の相対パス）",
+                    },
+                },
+                "required": ["project_name", "pattern", "replacement", "target_dir"],
+            },
+        ),
     ]
 
 
@@ -367,6 +472,18 @@ async def call_tool(name: str, arguments: Any) -> list[types.TextContent]:
             return await analyze_project_handler(arguments)
         elif name == "analyze_scenario_flow":
             return await analyze_scenario_flow_handler(arguments)
+        elif name == "git_init":
+            return await git_init_handler(arguments)
+        elif name == "git_commit":
+            return await git_commit_handler(arguments)
+        elif name == "git_status":
+            return await git_status_handler(arguments)
+        elif name == "git_log":
+            return await git_log_handler(arguments)
+        elif name == "optimize_resources":
+            return await optimize_resources_handler(arguments)
+        elif name == "batch_rename":
+            return await batch_rename_handler(arguments)
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
     except Exception as e:
@@ -1245,6 +1362,312 @@ async def analyze_scenario_flow_handler(arguments: dict) -> list[types.TextConte
     report += "```\n"
 
     return [types.TextContent(type="text", text=report)]
+
+
+async def git_init_handler(arguments: dict) -> list[types.TextContent]:
+    """Gitリポジトリを初期化"""
+    import subprocess
+    project_name = arguments["project_name"]
+    project_path = PROJECTS_DIR / project_name
+
+    if not project_path.exists():
+        return [types.TextContent(type="text", text=f"プロジェクト '{project_name}' が見つかりません")]
+
+    git_dir = project_path / ".git"
+    if git_dir.exists():
+        return [types.TextContent(type="text", text=f"既にGitリポジトリが初期化されています")]
+
+    try:
+        # git init
+        subprocess.run(["git", "init"], cwd=project_path, check=True, capture_output=True)
+
+        # .gitignore作成
+        gitignore_content = """# TyranoScript Project
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+node_modules/
+"""
+        (project_path / ".gitignore").write_text(gitignore_content, encoding="utf-8")
+
+        return [types.TextContent(type="text", text=f"✅ Gitリポジトリを初期化しました\n.gitignoreも作成しました")]
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"エラー: {str(e)}")]
+
+
+async def git_commit_handler(arguments: dict) -> list[types.TextContent]:
+    """変更をコミット"""
+    import subprocess
+    project_name = arguments["project_name"]
+    message = arguments["message"]
+    project_path = PROJECTS_DIR / project_name
+
+    if not project_path.exists():
+        return [types.TextContent(type="text", text=f"プロジェクト '{project_name}' が見つかりません")]
+
+    git_dir = project_path / ".git"
+    if not git_dir.exists():
+        return [types.TextContent(type="text", text=f"Gitリポジトリが初期化されていません。先にgit_initを実行してください")]
+
+    try:
+        # git add .
+        subprocess.run(["git", "add", "."], cwd=project_path, check=True, capture_output=True)
+
+        # git commit
+        result = subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=project_path,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode == 0:
+            return [types.TextContent(type="text", text=f"✅ コミットしました\n\n{result.stdout}")]
+        else:
+            return [types.TextContent(type="text", text=f"⚠️  {result.stdout}\n{result.stderr}")]
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"エラー: {str(e)}")]
+
+
+async def git_status_handler(arguments: dict) -> list[types.TextContent]:
+    """Git状態を確認"""
+    import subprocess
+    project_name = arguments["project_name"]
+    project_path = PROJECTS_DIR / project_name
+
+    if not project_path.exists():
+        return [types.TextContent(type="text", text=f"プロジェクト '{project_name}' が見つかりません")]
+
+    git_dir = project_path / ".git"
+    if not git_dir.exists():
+        return [types.TextContent(type="text", text=f"Gitリポジトリが初期化されていません")]
+
+    try:
+        result = subprocess.run(
+            ["git", "status"],
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return [types.TextContent(type="text", text=f"📋 Git Status:\n\n{result.stdout}")]
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"エラー: {str(e)}")]
+
+
+async def git_log_handler(arguments: dict) -> list[types.TextContent]:
+    """コミット履歴を表示"""
+    import subprocess
+    project_name = arguments["project_name"]
+    limit = arguments.get("limit", 10)
+    project_path = PROJECTS_DIR / project_name
+
+    if not project_path.exists():
+        return [types.TextContent(type="text", text=f"プロジェクト '{project_name}' が見つかりません")]
+
+    git_dir = project_path / ".git"
+    if not git_dir.exists():
+        return [types.TextContent(type="text", text=f"Gitリポジトリが初期化されていません")]
+
+    try:
+        result = subprocess.run(
+            ["git", "log", f"-{limit}", "--oneline", "--decorate"],
+            cwd=project_path,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode == 0 and result.stdout.strip():
+            return [types.TextContent(type="text", text=f"📜 コミット履歴 (最新{limit}件):\n\n{result.stdout}")]
+        else:
+            return [types.TextContent(type="text", text=f"コミット履歴がありません")]
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"エラー: {str(e)}")]
+
+
+async def optimize_resources_handler(arguments: dict) -> list[types.TextContent]:
+    """リソース最適化提案"""
+    project_name = arguments["project_name"]
+    project_path = PROJECTS_DIR / project_name
+
+    if not project_path.exists():
+        return [types.TextContent(type="text", text=f"プロジェクト '{project_name}' が見つかりません")]
+
+    import re
+
+    # 使用されているリソースを収集
+    scenario_dir = project_path / "data" / "scenario"
+    used_resources = {
+        "bgimage": set(),
+        "fgimage": set(),
+        "image": set(),
+        "bgm": set(),
+        "sound": set(),
+        "video": set()
+    }
+
+    if scenario_dir.exists():
+        for scenario_file in scenario_dir.glob("*.ks"):
+            try:
+                content = scenario_file.read_text(encoding="utf-8")
+                lines = content.split("\n")
+
+                for line in lines:
+                    # 背景画像
+                    if "[bg" in line:
+                        match = re.search(r'storage=["\']([^"\']+)["\']', line)
+                        if match:
+                            used_resources["bgimage"].add(match.group(1))
+
+                    # キャラクター画像
+                    if any(tag in line for tag in ["[chara_new", "[chara_show", "[chara_mod"]):
+                        match = re.search(r'storage=["\']([^"\']+)["\']', line)
+                        if match:
+                            used_resources["fgimage"].add(match.group(1))
+
+                    # その他画像
+                    if "[image" in line:
+                        match = re.search(r'storage=["\']([^"\']+)["\']', line)
+                        if match:
+                            used_resources["image"].add(match.group(1))
+
+                    # BGM
+                    if "[playbgm" in line:
+                        match = re.search(r'storage=["\']?([^"\'\s\]]+)', line)
+                        if match:
+                            used_resources["bgm"].add(match.group(1))
+
+                    # 効果音
+                    if "[playse" in line:
+                        match = re.search(r'storage=["\']?([^"\'\s\]]+)', line)
+                        if match:
+                            used_resources["sound"].add(match.group(1))
+
+                    # 動画
+                    if "[playvideo" in line:
+                        match = re.search(r'storage=["\']?([^"\'\s\]]+)', line)
+                        if match:
+                            used_resources["video"].add(match.group(1))
+            except:
+                pass
+
+    # 実際に存在するリソースを確認
+    report = f"""🔧 リソース最適化分析: {project_name}
+{'=' * 60}
+
+【使用状況】
+"""
+
+    total_unused = 0
+    total_missing = 0
+    total_size = 0
+
+    for category, used_files in used_resources.items():
+        resource_dir = project_path / "data" / category
+        if not resource_dir.exists():
+            continue
+
+        existing_files = {f.name: f for f in resource_dir.iterdir() if f.is_file()}
+
+        # 未使用ファイル
+        unused = set(existing_files.keys()) - used_files
+        # 存在しないファイル
+        missing = used_files - set(existing_files.keys())
+
+        category_size = sum(f.stat().st_size for f in existing_files.values())
+        total_size += category_size
+
+        report += f"\n【{category}】\n"
+        report += f"- 使用中: {len(used_files)}件\n"
+        report += f"- 存在ファイル: {len(existing_files)}件\n"
+        report += f"- 未使用: {len(unused)}件\n"
+
+        if unused:
+            total_unused += len(unused)
+            unused_size = sum(existing_files[f].stat().st_size for f in unused)
+            report += f"  削除候補: {', '.join(list(unused)[:5])}"
+            if len(unused) > 5:
+                report += f" ...他{len(unused)-5}件"
+            report += f"\n  削減可能サイズ: {unused_size / 1024:.1f} KB\n"
+
+        if missing:
+            total_missing += len(missing)
+            report += f"  ⚠️  参照されているが存在しないファイル:\n"
+            for f in list(missing)[:5]:
+                report += f"    - {f}\n"
+            if len(missing) > 5:
+                report += f"    ...他{len(missing)-5}件\n"
+
+    report += f"\n【サマリー】\n"
+    report += f"- 総リソースサイズ: {total_size / 1024 / 1024:.2f} MB\n"
+    report += f"- 未使用ファイル: {total_unused}件\n"
+    report += f"- 見つからないファイル: {total_missing}件\n"
+
+    if total_unused > 0:
+        report += f"\n💡 最適化提案:\n"
+        report += f"- 未使用ファイルを削除することでプロジェクトサイズを削減できます\n"
+
+    if total_missing > 0:
+        report += f"- ⚠️  シナリオで参照されているファイルが見つかりません\n"
+
+    return [types.TextContent(type="text", text=report)]
+
+
+async def batch_rename_handler(arguments: dict) -> list[types.TextContent]:
+    """一括リネーム"""
+    project_name = arguments["project_name"]
+    pattern = arguments["pattern"]
+    replacement = arguments["replacement"]
+    target_dir = arguments["target_dir"]
+
+    project_path = PROJECTS_DIR / project_name
+
+    if not project_path.exists():
+        return [types.TextContent(type="text", text=f"プロジェクト '{project_name}' が見つかりません")]
+
+    target_path = project_path / "data" / target_dir
+
+    if not target_path.exists():
+        return [types.TextContent(type="text", text=f"ディレクトリ '{target_dir}' が見つかりません")]
+
+    import re
+
+    renamed = []
+    errors = []
+
+    for file in target_path.iterdir():
+        if not file.is_file():
+            continue
+
+        new_name = re.sub(pattern, replacement, file.name)
+
+        if new_name != file.name:
+            new_path = target_path / new_name
+
+            if new_path.exists():
+                errors.append(f"❌ {file.name} → {new_name} (既に存在)")
+            else:
+                try:
+                    file.rename(new_path)
+                    renamed.append(f"✅ {file.name} → {new_name}")
+                except Exception as e:
+                    errors.append(f"❌ {file.name}: {str(e)}")
+
+    result = f"📝 一括リネーム結果:\n\n"
+
+    if renamed:
+        result += "【成功】\n" + "\n".join(renamed) + "\n\n"
+
+    if errors:
+        result += "【エラー】\n" + "\n".join(errors) + "\n\n"
+
+    if not renamed and not errors:
+        result += "該当するファイルが見つかりませんでした\n"
+
+    result += f"\n合計: {len(renamed)}件リネーム"
+
+    return [types.TextContent(type="text", text=result)]
 
 
 async def main():
